@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>Control de relés | ESP32</title>
+  <script src="https://unpkg.com/mqtt@5.10.4/dist/mqtt.min.js"></script>
+  <style>
+    :root { color-scheme: dark; --bg:#101827; --panel:#182437; --line:#2b3a50; --muted:#9aabc1; --text:#f3f6fb; --accent:#54d6a0; --red:#ff7777; }
+    * { box-sizing:border-box }
+    body { margin:0; min-height:100vh; padding:28px 16px; background:radial-gradient(ellipse at top,#1b2d45 0,#101827 58%); color:var(--text); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif }
+    main { width:min(820px,100%); margin:auto }
+    h1 { margin:0; font-size:clamp(1.7rem,4vw,2.25rem); letter-spacing:-.03em }
+    .intro,.hint { color:var(--muted) }
+    .intro { margin:6px 0 22px }
+    .card { background:rgba(24,36,55,.94); border:1px solid var(--line); border-radius:18px; padding:20px; margin:16px 0; box-shadow:0 12px 36px #0002 }
+    .card h2 { margin:0 0 14px; font-size:1.05rem }
+    .connection-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px }
+    label { display:grid; gap:6px; color:var(--muted); font-size:.88rem }
+    input { width:100%; min-width:0; border:1px solid var(--line); border-radius:10px; background:#101a29; color:var(--text); padding:11px 12px; font:inherit }
+    input:focus { outline:2px solid #54d6a080; border-color:var(--accent) }
+    .host { grid-column:1/-1 }
+    .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:14px }
+    button { border:1px solid var(--line); border-radius:11px; padding:11px 16px; background:#24344b; color:var(--text); font:600  .96rem system-ui,sans-serif; cursor:pointer; transition:transform .12s,filter .12s }
+    button:hover:enabled { filter:brightness(1.16); transform:translateY(-1px) }
+    button:disabled { opacity:.45; cursor:not-allowed }
+    .primary { background:var(--accent); color:#092318; border-color:var(--accent) }
+    .danger { background:#442b36; border-color:#70404b }
+    .statusline { display:flex; align-items:center; gap:9px; color:var(--muted); min-height:24px }
+    .dot { width:10px; height:10px; border-radius:50%; background:#8290a3 }
+    .dot.on { background:var(--accent); box-shadow:0 0 12px #54d6a080 }
+    .dot.error { background:var(--red) }
+    .relays { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+    .relay { border:1px solid var(--line); border-radius:14px; background:#111d2d; padding:18px }
+    .relay-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:15px }
+    .relay-name { font-weight:650; font-size:1.08rem }
+    .badge { border-radius:99px; padding:4px 10px; font-size:.8rem; font-weight:700; background:#313c4d; color:#c6d0dd }
+    .badge.on { background:#174532; color:#8ff0bf }
+    .badge.off { background:#3a3035; color:#ffaaaa }
+    .relay-buttons { display:flex; gap:9px }
+    .relay-buttons button { flex:1 }
+    .all-buttons { display:flex; gap:10px; flex-wrap:wrap }
+    .message { border:1px solid var(--line); border-radius:10px; background:#111d2d; padding:12px; min-height:48px; overflow-wrap:anywhere }
+    .hint { font-size:.85rem; margin:12px 0 0 }
+    @media(max-width:560px) { body{padding:20px 12px}.card{padding:16px}.connection-grid,.relays{grid-template-columns:1fr}.host{grid-column:auto}.relay{padding:15px} }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Control de relés</h1>
+  <p class="intro">Panel MQTT para tu ESP32. Conéctate al broker y controla las dos salidas.</p>
+
+  <section class="card" aria-labelledby="connection-title">
+    <h2 id="connection-title">Conexión EMQX</h2>
+    <div class="connection-grid">
+      <label class="host">Host
+        <input id="host" value="k226c23b.ala.eu-central-1.emqxsl.com" autocomplete="url" spellcheck="false">
+      </label>
+      <label>Usuario
+        <input id="username" autocomplete="username" spellcheck="false" placeholder="Usuario MQTT">
+      </label>
+      <label>Contraseña
+        <input id="password" type="password" autocomplete="current-password" placeholder="Contraseña MQTT">
+      </label>
+    </div>
+    <div class="actions">
+      <button id="connect" class="primary">Conectar</button>
+      <button id="disconnect" disabled>Desconectar</button>
+      <div class="statusline" role="status" aria-live="polite"><span class="dot" id="dot"></span><span id="connection-status">Desconectado</span></div>
+    </div>
+    <p class="hint">Usa WSS seguro por el puerto 8084 y la ruta /mqtt. Las credenciales solo se mantienen en esta pestaña mientras está abierta.</p>
+  </section>
+
+  <section class="card" aria-labelledby="relays-title">
+    <h2 id="relays-title">Relés</h2>
+    <div class="relays">
+      <article class="relay">
+        <div class="relay-head"><span class="relay-name">Relé 1</span><span class="badge" id="state1">Sin dato</span></div>
+        <div class="relay-buttons"><button data-command="ON1" class="primary control" disabled>Encender</button><button data-command="OFF1" class="danger control" disabled>Apagar</button></div>
+      </article>
+      <article class="relay">
+        <div class="relay-head"><span class="relay-name">Relé 2</span><span class="badge" id="state2">Sin dato</span></div>
+        <div class="relay-buttons"><button data-command="ON2" class="primary control" disabled>Encender</button><button data-command="OFF2" class="danger control" disabled>Apagar</button></div>
+      </article>
+    </div>
+    <div class="actions all-buttons"><button data-command="ALLON" class="primary control" disabled>Encender ambos</button><button data-command="ALLOFF" class="danger control" disabled>Apagar ambos</button><button data-command="STATUS" class="control" disabled>Actualizar estado</button></div>
+  </section>
+
+  <section class="card" aria-labelledby="reply-title">
+    <h2 id="reply-title">Última respuesta de la ESP32</h2>
+    <div class="message" id="reply" aria-live="polite">Aún no hay mensajes.</div>
+    <p class="hint">Temas: esp_sim/relays/cmd (comandos), esp_sim/relays/state (estado), esp_sim/relays/ack (confirmaciones).</p>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const controls = [...document.querySelectorAll('.control')];
+  const state = { client: null, connected: false };
+  const setStatus = (text, kind = '') => { $('connection-status').textContent = text; $('dot').className = `dot ${kind}`; };
+  const setConnected = (connected) => {
+    state.connected = connected;
+    $('connect').disabled = connected;
+    $('disconnect').disabled = !connected;
+    controls.forEach((button) => button.disabled = !connected);
+  };
+  const showRelay = (element, value) => {
+    const on = String(value).toUpperCase() === 'ON';
+    element.textContent = on ? 'ENCENDIDO' : 'APAGADO';
+    element.className = `badge ${on ? 'on' : 'off'}`;
+  };
+
+  $('connect').addEventListener('click', () => {
+    if (!window.mqtt) { setStatus('No cargó la librería MQTT. Revisa tu conexión a Internet.', 'error'); return; }
+    const host = $('host').value.trim();
+    const username = $('username').value.trim();
+    const password = $('password').value;
+    if (!host || !username || !password) { setStatus('Completa host, usuario y contraseña.', 'error'); return; }
+    if (state.client) state.client.end(true);
+    const clientId = `panel_${Math.random().toString(16).slice(2, 12)}`;
+    setStatus('Conectando…');
+    state.client = mqtt.connect(`wss://${host}:8084/mqtt`, {
+      clientId, username, password, clean: true, connectTimeout: 10000, reconnectPeriod: 3000,
+      protocolVersion: 4
+    });
+    state.client.on('connect', () => {
+      setConnected(true); setStatus('Conectado a EMQX', 'on');
+      state.client.subscribe(['esp_sim/relays/state', 'esp_sim/relays/ack'], { qos: 0 }, (err) => {
+        if (err) { $('reply').textContent = `Error al suscribirse: ${err.message}`; }
+        else state.client.publish('esp_sim/relays/cmd', 'STATUS', { qos: 0 });
+      });
+    });
+    state.client.on('reconnect', () => { setConnected(false); setStatus('Reconectando…'); });
+    state.client.on('close', () => { setConnected(false); if (state.client) setStatus('Desconectado'); });
+    state.client.on('error', (err) => { setStatus('Error MQTT: revisa credenciales y broker.', 'error'); $('reply').textContent = err.message; });
+    state.client.on('message', (topic, data) => {
+      const text = data.toString();
+      $('reply').textContent = `${topic}: ${text}`;
+      if (topic === 'esp_sim/relays/state') {
+        try { const value = JSON.parse(text); if (value.luz1) showRelay($('state1'), value.luz1); if (value.luz2) showRelay($('state2'), value.luz2); }
+        catch { $('reply').textContent = `${topic}: respuesta recibida, pero el formato no es JSON.`; }
+      }
+    });
+  });
+  $('disconnect').addEventListener('click', () => {
+    const client = state.client; state.client = null; setConnected(false);
+    if (client) client.end(true);
+    setStatus('Desconectado');
+  });
+  controls.forEach((button) => button.addEventListener('click', () => {
+    if (!state.connected || !state.client) return;
+    const command = button.dataset.command;
+    button.disabled = true;
+    state.client.publish('esp_sim/relays/cmd', command, { qos: 0 }, (err) => {
+      button.disabled = !state.connected;
+      if (err) $('reply').textContent = `No se pudo enviar ${command}: ${err.message}`;
+      else $('reply').textContent = `Comando enviado: ${command}. Esperando respuesta de la ESP32…`;
+    });
+  }));
+})();
+</script>
+</body>
+</html>
